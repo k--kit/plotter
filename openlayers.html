@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Browser-based Realtime PPI</title>
+<link rel="stylesheet" href="css/jquery.splitter.css" />
+<link rel="stylesheet" href="css/slick.grid.css" type="text/css"/>
+<link rel="stylesheet" href="css/mbExtruder.css" media="all" type="text/css">
+<link rel="stylesheet" href="css/jquery-ui.css" />
+<link type="text/css" rel="stylesheet" href="css/demo.css" />
+<link type="text/css" rel="stylesheet" href="css/jquery.mmenu.all.css" />
+    <link rel="stylesheet" href="http://openlayers.org/en/v3.3.0/css/ol.css" type="text/css">
+    <style>
+      .map {
+        height: 400px;
+        width: 100%;
+      }
+    </style>
+    <script src="http://openlayers.org/en/v3.3.0/build/ol.js" type="text/javascript"></script>
+<script type="text/javascript" src="js/d3.v3.min.js"></script>
+<script src="js/proj4.js"></script>
+<script src="js/jquery-1.8.0.min.js"></script>
+<script src="js/jquery-ui.js"></script>
+<script src="js/jquery.splitter-0.14.0.js"></script>
+<script src="js/jquery.event.drag-2.2.js"></script>
+<script src="js/slick.core.js"></script>
+<script src="js/slick.grid.js"></script>
+<script src="js/jquery.hoverIntent.min.js"></script>
+<script src="js/jquery.mb.flipText.js"></script>
+<script type="text/javascript" src="js/jquery.mmenu.min.all.js"></script>
+<style>
+.tooltip {
+  border: 1px solid black;
+  background-color: white;
+  padding: 2px 2px 2px 2px;
+  border-radius: 4px;
+  -moz-border-radius: 4px;
+  -webkit-border-radius: 4px;
+}
+.grid .tick {
+    stroke: lightgrey;
+    opacity: 0.7;
+}
+.tick line{
+  opacity: 0.2;
+}
+.grid path {
+      stroke-width: 0;
+}
+</style>
+
+<script>
+</script>
+</head>
+<body>
+<div class="header">
+	<a href="#menu"></a>
+	Browser-based Realtime PPI
+</div>
+		<div id="map"></div>
+<div id="vert_spl">
+	<div id="accordion1">
+		<h3>plots</h3>
+		<div id="plot"></div>
+	</div>
+	<div id="accordion2">
+		<h3>altitude chart</h3>
+		<div id="chart"></div>
+		<h3>distance chart</h3>
+		<div id="dist_chart"></div>
+	</div>
+</div>
+<div id="grid">
+	<h3>target data</h3>
+	<div id="myGrid"></div>
+</div>
+<nav id="menu">
+	<ul>
+		<li><a href="#">Home</a></li>
+		<li><a href="#">
+			<div id="accordion3">
+				<h4>replay mode</h4>
+				<div>
+					<span> start/end</span>
+					<div class="slider"></div>
+					<span> speed</span>
+					<div class="slider"></div>
+				</div>
+				<h4>realtime mode</h4>
+				<div>
+					<span> start</span>
+					<div class="slider"></div>
+					<span> end</span>
+					<div class="slider"></div>
+				</div>
+			</div>
+		</a></li>
+		<li><a href="#about">About us</a>
+			<ul>
+				<li><a href="#about/history">History</a></li>
+				<li><a href="#about/team">The team</a>
+					<ul>
+						<li><a href="#about/team/management">Management</a></li>
+						<li><a href="#about/team/sales">Sales</a></li>
+						<li><a href="#about/team/development">Development</a></li>
+					</ul>
+				</li>
+				<li><a href="#about/address">Our address</a></li>
+			</ul>
+		</li>
+		<li><a href="#contact">Contact</a></li>
+	</ul>
+</nav>
+
+<script type="text/javascript">
+
+$( ".slider" ).slider({
+	range: true,
+	values: [ 17, 67 ]
+});
+jQuery(function($) {
+   $('#vert_spl').width($(window).width()).height(440).split({orientation:'vertical', limit:100});
+});
+$(function() {
+	$( "#accordion1" ).accordion({ collapsible: true });
+	$( "#accordion2" ).accordion({ collapsible: true });
+	$( "#accordion3" ).accordion({ collapsible: false , heightStyle: "content"});
+	$( "#grid" ).height(400).accordion({ collapsible: true });
+	$("#myGrid").height(400);
+});
+$(function() {
+	$("nav#menu").mmenu({
+         classes: "mm-light"
+    });
+});
+
+var w = 800;
+var h = 400;
+var vbox_x = 0;
+var vbox_y = 0;
+var vbox_default_width = vbox_width = 400;
+var vbox_default_height = vbox_height = 200;
+var dataset;
+var color20 = d3.scale.category20(); // 20色を指定
+var tooltip = d3.select("body")
+	.append("div")
+	.attr("class", "tooltip")
+	.style("position", "absolute")
+	.style("z-index", "10")
+	.style("visibility", "hidden")
+	.text("a simple tooltip");
+	
+var svg = d3.select("div#plot")
+		.append("svg")
+		.attr("width", w)
+		.attr("height", h)
+		.attr("viewBox", "" + vbox_x + " " + vbox_y + " " + vbox_width + " " + vbox_height); //viewBox属性を付加;
+	
+var alt_chart = d3.select("div#chart")
+		.append("svg")
+		.attr("width", 500+100)
+		.attr("height", 300+20)
+		.append("g")
+		.attr("transform", "translate(" + 100 + "," + 0 + ")");
+var tracks = {};
+var timer;
+
+var proj_wgs84 = "+title=WGS 84 (long/lat) +proj=longlat +ellps=WGS84 +datum=WGS84 +units=degrees";
+var proj_aeqd_narita = "+proj=aeqd +lat_0=35.7553783 +lon_0=140.3473304 +x_0=0 +y_0=0";
+//I'm not going to redefine those two in latter examples.
+// [-2690666.2977344505, 3662659.885459918]
+
+d3.dsv(";", "text/plain")("test.csv", function(error, data) {
+	//console.log(data);
+	for (var i=0; i < data.length; i++){
+		var d = data[i];
+		var p = [d["042_X"]/2.0 , d["042_Y"]/2.0];
+		//console.log(p);
+		//p = proj4(proj_aeqd_narita, proj_wgs84, p);
+		d["lat_lon"] = proj4(proj_aeqd_narita).inverse(p)
+		//console.log(d["pos"]);
+	}
+	var min_time = d3.min(data, function(d) { return d["140_TIME_OF_DAY"];} );
+	console.log(min_time);
+	var filtered = data.filter(function(d) { return d["140_TIME_OF_DAY"] >= min_time && d["140_TIME_OF_DAY"] < min_time+1280 } );
+	console.log(filtered);
+	
+	//表示用のview
+	view = new ol.View({
+		projection: "EPSG:3857",
+		maxZoom: 18,
+		minZoom: 5
+	});
+
+	//地図用のレイヤ
+	var mapLayer = new ol.layer.Tile({
+		name : "MapLayer",
+		opacity:0.5,
+		source: new ol.source.OSM() //openstreet map
+	});
+
+	//mapを設定
+	map = new ol.Map({
+		target: document.getElementById('map'),
+		layers: [mapLayer, 
+			new ol.layer.Vector({
+			  source: new ol.source.TileVector({
+				format: new ol.format.TopoJSON(),
+				projection: 'EPSG:3857',
+				tileGrid: new ol.tilegrid.XYZ({
+				  maxZoom: 19
+				}),
+				url: 'http://{a-c}.tile.openstreetmap.us/' +
+					'vectiles-water-areas/{z}/{x}/{y}.topojson'
+			  }),
+			  opacity:0.6,
+			  style: new ol.style.Style({
+				fill: new ol.style.Fill({
+				  color: '#9db9e8'
+				})
+			  })
+			})
+		],
+		view: view,
+		renderer: ['canvas', 'dom'],
+		controls: ol.control.defaults(),
+		interactions: ol.interaction.defaults()
+	});
+
+	var narita_lon_lat = [140.3473304, 35.7553783];
+	//センターの初期設定
+	view.setCenter(ol.proj.transform(narita_lon_lat, "EPSG:4326", "EPSG:3857"));
+
+	//ズームレベルの初期設定
+	view.setZoom(10);
+
+	//スケールラインの追加
+	map.addControl(new ol.control.ScaleLine());
+	map.addControl(new ol.control.ZoomSlider());
+
+	//マーカー用レイヤの作成
+	var markerLayer = new ol.layer.Vector({
+		name : "MarkerLayer",
+		source : new ol.source.Vector()
+	});
+
+	//マーカー用レイヤをマップに追加
+	map.addLayer(markerLayer);
+	
+	
+
+	
+	
+	
+	exit();
+	
+	var xScale = d3.scale.linear()
+		 .domain([d3.min(data, function(d){return +d["042_X"];}), d3.max(data, function(d){return +d["042_X"];})])
+		 .range([0, w]);
+	var yScale = d3.scale.linear()
+		 .domain([d3.min(data, function(d){return +d["042_Y"];}), d3.max(data, function(d){return +d["042_Y"];})])
+		 .range([h, 0]);
+	
+	var xAxis = d3.svg.axis()
+		.scale(xScale)
+		.orient("bottom")
+		.innerTickSize(-h)
+		.outerTickSize(0)
+		//.tickSize(-h, 1, 1) // 棒の長さと方向。
+		//.ticks(500)
+		.tickFormat(function(d){ return d+"m"; });
+	var yAxis = d3.svg.axis()
+		.scale(yScale)
+		.orient("left")
+		.innerTickSize(-w)
+		.outerTickSize(0)
+		//.tickSize(-w,1,1) // 棒の長さと方向。
+		//.ticks(500)
+		.tickFormat(function(d){ return d+"m"; });
+
+	dataset = d3.nest()
+		.key(function(d){ return d["161_TRACK_NUMBER"];} )
+		.sortValues(function (a, b) { return d3.ascending(a["140_TIME_OF_DAY"], b["140_TIME_OF_DAY"]); })
+		.entries(data);
+
+	//console.log(dataset);
+
+	svg.append("g")
+		.attr("class", "x axis")
+		.call(xAxis);
+	svg.append("g")
+		.attr("class", "y axis")
+		.call(yAxis);
+
+	//ズームイベント設定    
+	var zoom = d3.behavior.zoom().on('zoom', function(){
+		var befere_vbox_width, before_vbox_height, d_x, d_y;
+		befere_vbox_width = vbox_width;
+		before_vbox_height = vbox_height;
+		vbox_width = vbox_default_width * d3.event.scale;
+		vbox_height = vbox_default_height * d3.event.scale;
+		d_x = (befere_vbox_width - vbox_width) / 2;
+		d_y = (before_vbox_height - vbox_height) / 2;
+		vbox_x += d_x;
+		vbox_y += d_y;
+		return svg.attr("viewBox", "" + vbox_x + " " + vbox_y + " " + vbox_width + " " + vbox_height);  //svgタグのviewBox属性を更新 
+	});
+	svg.call(zoom);
+	
+	//ドラッグイベント設定
+	drag = d3.behavior.drag().on('drag', function(){
+		vbox_x -= d3.event.dx;
+		vbox_y -= d3.event.dy;
+		return svg.attr("translate", "" + vbox_x + " " + vbox_y); //基点の調整。svgタグのtranslate属性を更新
+	});
+	svg.call(drag);
+	
+	for (var i=0; i < dataset.length; i++){
+		tracks[+dataset[i].key] = [];
+	}
+
+	var k = 0;
+	setInterval(function(){
+		for (var i=0; i < dataset.length; i++){
+			track = dataset[i].values;
+			if (track[k] !== undefined) { tracks[+dataset[i].key].push(track[k]); }
+		}
+		
+		for (var track_num in tracks){
+			svg.selectAll("circle.track"+track_num)
+				.data(tracks[track_num])
+				.enter()
+				.append("circle")
+				.attr("class", "track"+track_num)
+				.attr("cx", function(d) {
+					return xScale(+d["042_X"]);
+				})
+				.attr("cy", function(d) {
+					return yScale(+d["042_Y"]);
+				})
+				.attr("r", 1)
+				.attr("fill", function(d, j){
+					return color20(track_num);
+				})
+				.on("mouseover", function(){
+					$('.tooltip').css({visibility: "visible"});
+					$('.tooltip').css({opacity: 0, visibility: "visible"}).animate({opacity: 1.0, visibility: "visible"}, 200);
+					//return tooltip.style("visibility", "visible");
+				})
+				.on("mousemove", function(d){
+					//clearInterval(timer);
+					//timer = setInterval(function(){
+					//高度チャートを作成
+					alt_chart.selectAll("path").remove();
+					alt_chart.selectAll("g").remove();
+					var selected_track = tracks[+d["161_TRACK_NUMBER"]];
+					console.log(selected_track);
+					var alt_x_scale = d3.scale.linear()
+						.range([0,500])
+						.domain(d3.extent(selected_track, function(d){
+							return d["head_time"];
+						}));
+					var alt_y_scale = d3.scale.linear()
+						.range([300,0])
+						.domain(d3.extent(selected_track, function(d){
+							return d["090_Flight_Level"];
+						}));
+					
+					var alt_x_axis = d3.svg.axis()
+						.scale(alt_x_scale)
+						.orient("bottom")
+						.tickFormat(function(d){ return d3.format("f")(+d/128/60); })
+						.innerTickSize(-300)
+						.outerTickSize(0);
+					var alt_y_axis = d3.svg.axis()
+						.scale(alt_y_scale)
+						.orient("left")
+						.innerTickSize(-500)
+						.outerTickSize(0)
+						//.tickSize(-w,1,1) // 棒の長さと方向。
+						//.ticks(500)
+						.tickFormat(function(d){ return "FL"+d; });
+					alt_chart.append("g")
+						.attr("class", "x axis")
+						.attr("transform", "translate(0," + 300 + ")")
+						.call(alt_x_axis);
+					alt_chart.append("g")
+						.attr("class", "y axis")
+						.call(alt_y_axis);
+					var alt_chart_line = d3.svg.line()
+						.x(function(d){return alt_x_scale(+d["head_time"]);})
+						.y(function(d){return alt_y_scale(+d["090_Flight_Level"]);})
+					alt_chart.append("path")
+						.attr({
+							"d": alt_chart_line(
+								selected_track.filter(function(d,i){
+									return (d["090_Flight_Level"] == "")
+										 ? null: d["090_Flight_Level"];})
+								), //d属性の指定
+							fill: "none",
+							stroke: "steelblue",
+							"stroke-width": 2
+						});
+					//gridにデータをセット
+					
+					var columns = [
+						{id: "IDENT", name: "ID", field: "IDENT", sortable: true},
+						{id: "head_time", name: "head_time", field: "head_time", sortable: true},
+						{id: "042_X", name: "x", field: "042_X", sortable: true},
+						{id: "042_Y", name: "y", field: "042_Y", sortable: true},
+						{id: "090_Flight_Level", name: "FL", field: "090_Flight_Level", sortable: true},
+						{id: "161_TRACK_NUMBER", name: "track number", field: "161_TRACK_NUMBER", sortable: true},
+						{id: "245_target_identification", name: "call sign", field: "245_target_identification", sortable: true},
+						{id: "220_Target_Address", name: "MS", field: "220_Target_Address", sortable: true}
+					];
+					var grid_options = {
+						editable:false,
+						enableCellNavigation: true,
+						enableColumnReorder: true,
+						forceFitColumns: true
+					};
+					var grid = new Slick.Grid("#myGrid", selected_track, columns, grid_options);
+					//}, 300);
+					//ツールチップに値をセット
+					return tooltip
+					.style("top", (d3.event.pageY-10)+"px")
+					.style("left",(d3.event.pageX+10)+"px")
+					.html("<dl><dt>x</dt><dd>" + d["042_X"] + "</dd><dt>y</dt><dd>" + d["042_Y"] + "</dd><dt>flight level</dt><dd>" + d["090_Flight_Level"] + "</dd><dt>number</dt><dd>" + d["161_TRACK_NUMBER"] + "</dd><dt>MS address</dt><dd>" + d3.format("X")(d["220_Target_Address"]) + "</dd><dt>time</dt><dd>" + d["head_time"] + "</dd></dl>");
+				})
+				.on("mouseout", function(){
+					$('.tooltip').css({opacity: 1.0, visibility: "visible"}).animate({opacity: 0.0,}, 200, function () {$('.tooltip').css({visibility: "hidden"});} );
+				});
+		}
+		k++;
+	}, 500);
+});
+
+
+</script>
+</body>
+</html>
