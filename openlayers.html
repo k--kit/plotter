@@ -9,14 +9,14 @@
 <link rel="stylesheet" href="css/jquery-ui.css" />
 <link type="text/css" rel="stylesheet" href="css/demo.css" />
 <link type="text/css" rel="stylesheet" href="css/jquery.mmenu.all.css" />
-    <link rel="stylesheet" href="http://openlayers.org/en/v3.3.0/css/ol.css" type="text/css">
+    <link rel="stylesheet" href="css/ol.css" type="text/css">
     <style>
       .map {
         height: 400px;
         width: 100%;
       }
     </style>
-    <script src="http://openlayers.org/en/v3.3.0/build/ol.js" type="text/javascript"></script>
+    <script src="js/ol-debug.js" type="text/javascript"></script>
 <script type="text/javascript" src="js/d3.v3.min.js"></script>
 <script src="js/proj4.js"></script>
 <script src="js/jquery-1.8.0.min.js"></script>
@@ -170,6 +170,33 @@ var proj_aeqd_narita = "+proj=aeqd +lat_0=35.7553783 +lon_0=140.3473304 +x_0=0 +
 //I'm not going to redefine those two in latter examples.
 // [-2690666.2977344505, 3662659.885459918]
 
+// Executed when data is loaded by the $.ajax method.
+var loadFeaturesBbox = function(response) {
+	vsStrategyBbox.addFeatures(vsStrategyBbox.readFeatures(response));
+};
+// Source using a bbox strategy
+var vsStrategyBbox = new ol.source.ServerVector({
+	format: new ol.format.GeoJSON(),
+	loader: function(extent, resolution, projection) {
+		var url = 'http://demo.opengeo.org/geoserver/wfs?'+
+			'service=WFS&request=GetFeature&'+
+			'version=1.1.0&typename=osm:water_areas&'+
+			'outputFormat=text/javascript&'+
+			'format_options=callback:loadFeaturesBbox&' +
+			'srsname=EPSG:3857&bbox=' + ol.proj.transform([extent[0],extent[1]], "EPSG:4326", "EPSG:3857").join(',') +","+ ol.proj.transform([extent[2],extent[3]], "EPSG:4326", "EPSG:3857").join(',');
+
+		var reqq = $.ajax({
+			url: url,
+			dataType: 'jsonp'
+		});
+		reqq.done(function(response){
+			vsStrategyBbox.addFeatures(vsStrategyBbox.readFeatures(response));
+		});
+	},
+	strategy: ol.loadingstrategy.bbox,
+	projection: 'EPSG:4326'
+});
+	
 d3.dsv(";", "text/plain")("test.csv", function(error, data) {
 	//console.log(data);
 	for (var i=0; i < data.length; i++){
@@ -187,7 +214,8 @@ d3.dsv(";", "text/plain")("test.csv", function(error, data) {
 	
 	//表示用のview
 	view = new ol.View({
-		projection: "EPSG:3857",
+		//projection: "EPSG:3857",
+		projection: "EPSG:4326",
 		maxZoom: 18,
 		minZoom: 5
 	});
@@ -199,27 +227,72 @@ d3.dsv(";", "text/plain")("test.csv", function(error, data) {
 		source: new ol.source.OSM() //openstreet map
 	});
 
+	var tile_vect = new ol.source.TileVector({
+		format: new ol.format.TopoJSON({
+		  defaultProjection: 'EPSG:4326'
+		}),
+		//projection: 'EPSG:3857',
+		projection: 'EPSG:4326',
+		tileGrid: new ol.tilegrid.XYZ({
+		  maxZoom: 10
+		}),
+		tileUrlFunction: function(coord,  tmp, proj){
+			//console.log(tile_vect);
+			console.log(coord);
+			console.log(proj);
+			 function tile2long(x,z) {
+				return (x/Math.pow(2,z)*360-180);
+			};
+			 function tile2lat(y,z) {
+			  var n=Math.PI-2*Math.PI*y/Math.pow(2,z);
+			  return (180/Math.PI*Math.atan(0.5*(Math.exp(n)-Math.exp(-n))));
+			 };
+			 var lon = tile2long(coord[1], coord[0]);
+			 var lat = tile2long(coord[2], coord[0]);
+			 console.log([lon, lat]);
+			var mer = ol.proj.transform([lon, lat], "EPSG:4326", "EPSG:3857");
+			return "http://c.tile.openstreetmap.us/vectiles-water-areas/10/909/401.topojson";
+			//return "http://{a-c}.tile.openstreetmap.us/vectiles-water-areas/{z}/{x}/{y}.topojson";
+		}
+		,
+		//url: 'http://{a-c}.tile.openstreetmap.us/vectiles-water-areas/{z}/{x}/{y}.topojson'
+	});
+	
+	// Vector layer
+	var vectorLayerBbox = new ol.layer.Vector({
+		source: vsStrategyBbox,
+		style: new ol.style.Style({
+			stroke: new ol.style.Stroke({
+				color: 'green',
+				width: 2
+			})
+		})
+	});
+	
 	//mapを設定
 	map = new ol.Map({
 		target: document.getElementById('map'),
-		layers: [mapLayer, 
+		layers: [
+			//mapLayer, 
+				/*new ol.layer.Tile({
+					opacity:0.5,
+					source: new ol.source.TileWMS({
+						url: 'http://demo.boundlessgeo.com/geoserver/wms',
+						params: {
+						'LAYERS': 'ne:NE1_HR_LC_SR_W_DR'
+						}
+					})
+				}),*/
 			new ol.layer.Vector({
-			  source: new ol.source.TileVector({
-				format: new ol.format.TopoJSON(),
-				projection: 'EPSG:3857',
-				tileGrid: new ol.tilegrid.XYZ({
-				  maxZoom: 19
-				}),
-				url: 'http://{a-c}.tile.openstreetmap.us/' +
-					'vectiles-water-areas/{z}/{x}/{y}.topojson'
-			  }),
+			  source: tile_vect,
 			  opacity:0.6,
 			  style: new ol.style.Style({
 				fill: new ol.style.Fill({
 				  color: '#9db9e8'
 				})
 			  })
-			})
+			}),
+			vectorLayerBbox
 		],
 		view: view,
 		renderer: ['canvas', 'dom'],
@@ -229,7 +302,9 @@ d3.dsv(";", "text/plain")("test.csv", function(error, data) {
 
 	var narita_lon_lat = [140.3473304, 35.7553783];
 	//センターの初期設定
-	view.setCenter(ol.proj.transform(narita_lon_lat, "EPSG:4326", "EPSG:3857"));
+	//view.setCenter(ol.proj.transform(narita_lon_lat, "EPSG:4326", "EPSG:3857"));
+	//view.setCenter(narita_lon_lat);
+	view.setCenter([-75.923853, 45.428736]);
 
 	//ズームレベルの初期設定
 	view.setZoom(10);
